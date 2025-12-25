@@ -1,29 +1,34 @@
-function expectedAppOriginFromApiHost(host) {
-  // host может быть 'api.catino.vip' или 'api.catino.vip:443'
-  const h = (host || "").toLowerCase().split(":")[0];
+function parseHostNoPort(host) {
+  return (host || "").toLowerCase().split(":")[0];
+}
 
-  // Требуем, чтобы это был именно api.{zone}
+function expectedOriginsFromApiHost(host) {
+  const h = parseHostNoPort(host);
+
   if (!h.startsWith("api.")) return null;
 
-  const zone = h.slice("api.".length); // 'catino.vip'
+  const zone = h.slice("api.".length); // например "catino.vip"
   if (!zone) return null;
 
-  return `https://${zone}`;
+  return [`https://${zone}`, `https://app.${zone}`];
 }
 
 function isAllowedByDynamicOrigin(request) {
   const host = request.headers.get("Host") || "";
-  const expectedOrigin = expectedAppOriginFromApiHost(host);
-  if (!expectedOrigin) return false;
+  const allowedOrigins = expectedOriginsFromApiHost(host);
+  if (!allowedOrigins) return false;
 
   const origin = request.headers.get("Origin") || "";
   const referer = request.headers.get("Referer") || "";
 
-  // Для fetch/XHR браузер обычно отправляет Origin (особенно при CORS)
-  if (origin === expectedOrigin) return true;
+  if (origin && allowedOrigins.includes(origin)) return true;
 
-  // Для некоторых навигаций/редких кейсов может быть Referer
-  if (referer.startsWith(expectedOrigin + "/")) return true;
+  if (referer) {
+    for (const o of allowedOrigins) {
+      if (referer.startsWith(o + "/")) return true;
+      if (referer === o) return true;
+    }
+  }
 
   return false;
 }
@@ -32,7 +37,7 @@ export default {
   async fetch(request, env) {
     const headers = new Headers(request.headers);
 
-    // Добавляем токен только если запрос "своего" app.{zone} к api.{zone}
+    // Добавляем токен только если запрос пришёл с root домена или app.{zone}
     if (isAllowedByDynamicOrigin(request)) {
       headers.set("X-Edge-Token", env.EDGE_TOKEN);
     }
