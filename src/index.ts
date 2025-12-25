@@ -1,50 +1,51 @@
-function parseHostNoPort(host) {
-  return (host || "").toLowerCase().split(":")[0];
-}
+function extractZoneFromHost(host) {
+  if (!host) return null;
 
-function expectedOriginsFromApiHost(host) {
-  const h = parseHostNoPort(host);
+  let zone = host.toLowerCase().split(":")[0];
 
-  if (!h.startsWith("api.")) return null;
+  const STRIP_PREFIXES = [
+    "app.",
+    "www.",
+    // "web.",
+    // "frontend.",
+  ];
 
-  const zone = h.slice("api.".length); // например "catino.vip"
-  if (!zone) return null;
-
-  return [`https://${zone}`, `https://app.${zone}`];
-}
-
-function isAllowedByDynamicOrigin(request) {
-  const host = request.headers.get("Host") || "";
-  const allowedOrigins = expectedOriginsFromApiHost(host);
-  if (!allowedOrigins) return false;
-
-  const origin = request.headers.get("Origin") || "";
-  const referer = request.headers.get("Referer") || "";
-
-  if (origin && allowedOrigins.includes(origin)) return true;
-
-  if (referer) {
-    for (const o of allowedOrigins) {
-      if (referer.startsWith(o + "/")) return true;
-      if (referer === o) return true;
+  for (const prefix of STRIP_PREFIXES) {
+    if (zone.startsWith(prefix)) {
+      zone = zone.slice(prefix.length);
+      break;
     }
   }
 
-  return false;
+  return zone || null;
 }
-
 export default {
-  async fetch(request, env) {
-    const headers = new Headers(request.headers);
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
 
-    // Добавляем токен только если запрос пришёл с root домена или app.{zone}
-    if (isAllowedByDynamicOrigin(request)) {
-      headers.set("X-Edge-Token", env.EDGE_TOKEN);
+    // Обрабатываем только /api/*
+    if (!url.pathname.startsWith("/api/")) {
+      return new Response("Not found", { status: 404 });
     }
 
-    const newRequest = new Request(request.url, {
+    // Определяем zone из текущего хоста
+    // mellcs.games        -> api.mellcs.games
+    // app.catino.vip      -> api.catino.vip
+    // www.example.com     -> api.example.com
+    const host = request.headers.get("Host") || "";
+    const zone = extractZoneFromHost(host);
+
+    const targetUrl = new URL(`https://api.${zone}`);
+    targetUrl.pathname = url.pathname.replace(/^\/api/, "");
+    targetUrl.search = url.search;
+
+    // Копируем заголовки и добавляем серверный токен
+    const newHeaders = new Headers(request.headers);
+    newHeaders.set("X-Edge-Token", env.EDGE_TOKEN);
+
+    const proxiedRequest = new Request(targetUrl.toString(), {
       method: request.method,
-      headers,
+      headers: newHeaders,
       body:
         request.method === "GET" || request.method === "HEAD"
           ? undefined
@@ -52,6 +53,6 @@ export default {
       redirect: "manual",
     });
 
-    return fetch(newRequest);
+    return fetch(proxiedRequest);
   },
 };
