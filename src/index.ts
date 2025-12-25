@@ -36,7 +36,7 @@ export default {
     const zone = extractZoneFromHost(host);
 
     const targetUrl = new URL(`https://api.${zone}`);
-    targetUrl.pathname = url.pathname.replace(/^\/api/, "");
+    targetUrl.pathname = url.pathname;
     targetUrl.search = url.search;
 
     // Копируем заголовки и добавляем серверный токен
